@@ -295,10 +295,7 @@ func (ue *UEContext) TakeBinarySemaphoreDeregistration() {
 	<-ue.BinarySemaphoreDeregistration
 }
 
-func (ue *UEContext) Init(ranUeNgapId int64) {
-	ue.RanUeNgapId = ranUeNgapId
-	ue.AmfUeNgapId = AmfUeNgapIdUnspecified
-
+func (ue *UEContext) Init() {
 	ue.EstablishmentEnable()
 	ue.PduSessionExtendedList = make(map[int64]*PDUSessionExtended)
 	ue.PduSessionIDList = make(map[int64]bool)

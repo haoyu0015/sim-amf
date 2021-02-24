@@ -283,23 +283,50 @@ func BuildInitialContextSetupRequest(ue *context.UEContext, nasPdu []byte) ([]by
 	}
 
 	// GUAMI
+	guami := new(ngapType.GUAMI)
+
+	//<5G-GUTI> = <GUAMI><5G-TMSI>,
+	//<GUAMI> := <MCC> <MNC> <AMF Region ID> <AMF Set ID> <AMF Pointer>
+	//<AMF Identifier> = <AMF Region ID><AMF Set ID><AMF Pointer>
+	//MCC and MNC shall have the same field size as in earlier 3GPP systems.
+	//5G-TMSI shall be of 32 bits length.
+	//AMF Region ID shall be of 8 bits length.
+	//AMF Set ID shall be of 10 bits length.
+	//AMF Pointer shall be of 6 bits length.
+
+	guami.PLMNIdentity.Value = []byte{0x11, 0x12, 0x13} // 3 bytes
+	guami.AMFRegionID.Value.Bytes = []byte{0x03}
+	guami.AMFRegionID.Value.BitLength = 8
+	guami.AMFSetID.Value.Bytes = []byte{0x02, 0x01}
+	guami.AMFSetID.Value.BitLength = 10
+	guami.AMFPointer.Value.Bytes = []byte{0x01}
+	guami.AMFPointer.Value.BitLength = 6
 
 	ie = ngapType.InitialContextSetupRequestIEs{}
 	ie.Id.Value = ngapType.ProtocolIEIDGUAMI
 	ie.Criticality.Value = ngapType.CriticalityPresentReject
 	ie.Value.Present = ngapType.InitialContextSetupRequestIEsPresentGUAMI
 	ie.Value.GUAMI = new(ngapType.GUAMI)
-	*ie.Value.GUAMI = ue.CurrentAMF.ServedGuamiList.List[0].GUAMI
+	ie.Value.GUAMI = guami
 
 	initialContextSetupRequestIEs.List = append(initialContextSetupRequestIEs.List, ie)
 
 	// Allowed NSSAI
+	allowedNssaiList := new(ngapType.AllowedNSSAI)
+	allowedNssai := ngapType.AllowedNSSAIItem{
+		SNSSAI: ngapType.SNSSAI{
+			SST: ngapType.SST{
+				Value: []byte{1},
+			},
+			SD: &ngapType.SD{
+				Value: []byte{0x11, 0x22, 0x33},
+			}}}
+	allowedNssaiList.List = append(allowedNssaiList.List, allowedNssai)
 	ie = ngapType.InitialContextSetupRequestIEs{}
 	ie.Id.Value = ngapType.ProtocolIEIDAllowedNSSAI
 	ie.Criticality.Value = ngapType.CriticalityPresentReject
 	ie.Value.Present = ngapType.InitialContextSetupRequestIEsPresentAllowedNSSAI
-	ie.Value.AllowedNSSAI = ue.CurrentAMF.AllowedNssai
-
+	ie.Value.AllowedNSSAI = allowedNssaiList
 	initialContextSetupRequestIEs.List = append(initialContextSetupRequestIEs.List, ie)
 
 	// UE Security Capabilities
@@ -517,6 +544,8 @@ func buildPDUSessionResourceSetupRequest(ue *context.UEContext, pduSessionID uin
 	// hard code
 	snssai := new(ngapType.SNSSAI)
 	snssai.SST.Value = []uint8{0x01}
+	snssai.SD = new(ngapType.SD)
+	snssai.SD.Value = []uint8{0x11, 0x22, 0x33}
 	setupReqItem.SNSSAI = *snssai
 	setupReqItem.PDUSessionResourceSetupRequestTransfer = []uint8{
 		0x00, 0x00, 0x04, 0x00, 0x82, 0x00, 0x06, 0x04, 0x03, 0xe8, 0x10, 0x03, 0xe8, 0x00, 0x8b, 0x00,
@@ -828,7 +857,7 @@ func BuildRegistrationAccept(ue *context.UEContext) ([]byte, error) {
 	var nasMsg []byte
 	var pdu []byte
 	var err error
-	nasMsg, err = BuildRegistrationAccept(ue)
+	nasMsg, err = buildRegistrationAccept(ue)
 	if err != nil {
 		return nasMsg, err
 	}
@@ -837,4 +866,37 @@ func BuildRegistrationAccept(ue *context.UEContext) ([]byte, error) {
 		return pdu, err
 	}
 	return pdu, err
+}
+
+func buildRegistrationAccept(ue *context.UEContext) ([]byte, error) {
+
+	m := nas.NewMessage()
+	m.GmmMessage = nas.NewGmmMessage()
+	m.GmmHeader.SetMessageType(nas.MsgTypeRegistrationAccept)
+
+	m.SecurityHeader = nas.SecurityHeader{
+		ProtocolDiscriminator: nasMessage.Epd5GSMobilityManagementMessage,
+		SecurityHeaderType:    nas.SecurityHeaderTypeIntegrityProtectedAndCiphered,
+	}
+
+	registrationAccept := nasMessage.NewRegistrationAccept(0)
+	registrationAccept.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(nasMessage.Epd5GSMobilityManagementMessage)
+	registrationAccept.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(nas.SecurityHeaderTypePlainNas)
+	registrationAccept.SpareHalfOctetAndSecurityHeaderType.SetSpareHalfOctet(0)
+	registrationAccept.RegistrationAcceptMessageIdentity.SetMessageType(nas.MsgTypeRegistrationAccept)
+
+	registrationAccept.RegistrationResult5GS.SetLen(1)
+	registrationResult := uint8(0)
+	registrationResult |= nasMessage.AccessTypeNon3GPP
+	registrationResult |= nasMessage.AccessType3GPP
+
+	registrationAccept.RegistrationResult5GS.SetRegistrationResultValue5GS(registrationResult)
+
+	registrationAccept.AllowedNSSAI = nasType.NewAllowedNSSAI(0x15)
+	registrationAccept.AllowedNSSAI.SetLen(6)
+	value := []uint8{0x01, 0x11, 0x22, 0x33}
+	registrationAccept.AllowedNSSAI.SetSNSSAIValue(value)
+
+	m.GmmMessage.RegistrationAccept = registrationAccept
+	return m.PlainNasEncode()
 }

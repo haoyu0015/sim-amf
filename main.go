@@ -33,6 +33,10 @@ var SctpClientConn struct {
 	sctpCliConn *sctp.SCTPConn
 }
 
+var RanIDAmfIDMap sync.Map
+
+// var AMFUENGAPIDGenerator *types.IDGenerator
+
 func main() {
 	// ngap server listener
 	addr, _ := sctp.ResolveSCTPAddr("sctp", "127.0.0.1:38412")
@@ -77,18 +81,12 @@ func main() {
 				logger.MainLog.Error("Server NGAP decode error: %+v", err)
 				return
 			}
-			DumpPdu(pdu, "server decode")
-
-			// end2endWg.Add(1)
 			go func() {
-				// defer end2endWg.Done()
 				ue := InitTest()
 				end2end_serverHandler(serverConn, pdu, ue)
 			}()
 		}
 	}
-	//time.Sleep(1 * time.Second) // let all goroutine of test done
-	//end2endWg.Wait()
 }
 
 func SetSctpServerConn(svr *sctp.SCTPConn) {
@@ -154,6 +152,7 @@ func DumpPdu(pdu *ngapType.NGAPPDU, info string) {
 }
 
 func InitTest() *context.UEContext {
+	// AMFUENGAPIDGenerator = types.NewIDGenerator(0, math.MaxInt64)
 	ue := &context.UEContext{}
 	InitTestUe(ue)
 
@@ -177,17 +176,11 @@ func InitTestUe(ue *context.UEContext) {
 		context.StringToNgap(rgCtx.LineID),
 		rgCtx.CircuitID,
 		rgCtx.RemoteID)
-	ue.Init(7)
+	ue.Init()
 	ue.RGAttach(rgCtx)
-	//gmm.InitUEContextSm(ue)
 
-	// used for AMF
 	ue.AmfUeNgapId = 999
 
-	/*err := ue.ChangeSmState(types.GMM_REGISTER_INITIATED)
-	if err != nil {
-		logger.MainLog.Error("change state failed: %+v", err)
-	}*/
 	ue.Kwagf = []uint8{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
 
 	// overwrite timer default values fo test
@@ -232,7 +225,7 @@ func end2end_serverHandler(serverConn *sctp.SCTPConn, pdu *ngapType.NGAPPDU, ue 
 		case ngapType.ProcedureCodeInitialContextSetup:
 			switch successfulOutcome.Value.Present {
 			case ngapType.SuccessfulOutcomePresentInitialContextSetupResponse:
-				handleInitialContextSetupResponse(ue, serverConn)
+				handleInitialContextSetupResponse(pdu, ue, serverConn)
 			default:
 				logger.MainLog.Error("[TEST] Server unexpected successfulOutcome(InitialContextSetup) response:%d", successfulOutcome.Value.Present)
 			}
@@ -256,12 +249,13 @@ func handleInitialUEMessage(pdu *ngapType.NGAPPDU, ue *context.UEContext, server
 		for i := 0; i < len(initialUEMessage.ProtocolIEs.List); i++ {
 			ie := initialUEMessage.ProtocolIEs.List[i]
 			switch ie.Id.Value {
+			case ngapType.ProtocolIEIDRANUENGAPID:
+				ue.RanUeNgapId = ie.Value.RANUENGAPID.Value
 			case ngapType.ProtocolIEIDNASPDU:
 				nASPDU := ie.Value.NASPDU
 				if nASPDU == nil {
 					logger.MainLog.Error("Missing nasPDU")
 				}
-
 				nasPdu := nASPDU.Value
 				msg, err := nas.Decode(ue, ue.RGType, lib_nas.GetSecurityHeaderType(nasPdu)&0x0f, nasPdu)
 				if err != nil {
@@ -359,6 +353,8 @@ func handleUplinkNASTransport(pdu *ngapType.NGAPPDU, ue *context.UEContext, serv
 	for i := 0; i < len(uplinkNasTransport.ProtocolIEs.List); i++ {
 		ie := uplinkNasTransport.ProtocolIEs.List[i]
 		switch ie.Id.Value {
+		case ngapType.ProtocolIEIDRANUENGAPID:
+			ue.RanUeNgapId = ie.Value.RANUENGAPID.Value
 		case ngapType.ProtocolIEIDNASPDU:
 			nASPDU := ie.Value.NASPDU
 			if nASPDU == nil {
@@ -482,7 +478,15 @@ func SendUplinkNASTransport(amf *context.AMFContext, ue *context.UEContext, nasP
 	SendToAmf(amf, pkt)
 }
 
-func handleInitialContextSetupResponse(ue *context.UEContext, serverConn *sctp.SCTPConn) {
+func handleInitialContextSetupResponse(pdu *ngapType.NGAPPDU, ue *context.UEContext, serverConn *sctp.SCTPConn) {
+	initialContextSetupRsp := pdu.SuccessfulOutcome.Value.InitialContextSetupResponse
+	for i := 0; i < len(initialContextSetupRsp.ProtocolIEs.List); i++ {
+		ie := initialContextSetupRsp.ProtocolIEs.List[i]
+		switch ie.Id.Value {
+		case ngapType.ProtocolIEIDRANUENGAPID:
+			ue.RanUeNgapId = ie.Value.RANUENGAPID.Value
+		}
+	}
 	pkt, err := BuildRegistrationAccept(ue)
 	if err != nil {
 		logger.MainLog.Error("[TEST] Error %v", err)
